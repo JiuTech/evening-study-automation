@@ -1,0 +1,19 @@
+{
+  "name": "半月晚自习公示自动生成器",
+  "short_name": "晚自习公示",
+  "description": "在本设备浏览器中识别群聊记录并生成半月晚自习公示 Excel",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f5ef",
+  "theme_color": "#0f5036",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

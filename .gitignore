@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+output/*.xlsx
+outputs/
+data/backups/
+data/*.xlsx
+data/12月截图文本整理.txt
+preview/
+node_modules/
