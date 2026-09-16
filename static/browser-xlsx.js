@@ -138,7 +138,7 @@
       const className = values[3] || "";
       const studentId = values[4] || "";
       if (!name || !className || !studentId) continue;
-      const classCode = className.match(/25\d{2}/)?.[0] || "";
+      const classCode = className.match(/26\d{2}/)?.[0] || "";
       roster.push({
         row: rowNumber,
         serial: roster.length + 1,
@@ -149,7 +149,7 @@
         group: className.includes("数学类") ? "数学类" : "中外",
       });
     }
-    if (!roster.length) throw new Error("未找到名单：请确认第2行为表头，第3行起是学生名单");
+    if (roster.length !== 257) throw new Error(`26级名单人数异常：应为257人，实际${roster.length}人`);
     return roster;
   }
 
@@ -168,7 +168,7 @@
 
     const mathDays = Math.max(1, Number(settings.math_days) || 1);
     const intlDays = Math.max(1, Number(settings.intl_days) || 1);
-    const grade = String(settings.grade || "25级").trim() || "25级";
+    const grade = "26级";
     const title = `数统${grade}晚自习${settings.month}月${settings.period}公示表（本轮晚自习数学类${mathDays}天 中外${intlDays}天）`;
     const titleRow = rows.get(1);
     if (titleRow) setInlineText(sheet, findOrCreateCell(sheet, titleRow, "A1"), title);

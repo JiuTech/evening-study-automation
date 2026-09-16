@@ -28,6 +28,20 @@ function settings() {
   };
 }
 
+function validateSettings(config = settings()) {
+  if (!Number.isInteger(config.year) || config.year < 2020 || config.year > 2100) return "请检查公示年份";
+  if (!Number.isInteger(config.month) || config.month < 1 || config.month > 12) return "请检查月份";
+  if (!Number.isInteger(config.math_days) || config.math_days < 1 || config.math_days > 31) return "请检查数学类检查天数";
+  if (!Number.isInteger(config.intl_days) || config.intl_days < 1 || config.intl_days > 31) return "请检查中外检查天数";
+  return null;
+}
+
+function dateInSelectedPeriod(isoDate, config) {
+  const [year, month, day] = String(isoDate).split("-").map(Number);
+  if (year !== config.year || month !== config.month) return false;
+  return config.period === "上半月" ? day <= 15 : day >= 16;
+}
+
 function goTo(step) {
   [1, 2, 3].forEach((number) => {
     $(`#step${number}`).classList.toggle("hidden", number !== step);
@@ -53,7 +67,7 @@ function normaliseLine(line) {
 }
 
 function looksLikeSender(line) {
-  return /(?:数学类|中外|应数)\s*25\d{2}.*[-—_].*[\u4e00-\u9fff]{2,5}$/.test(line)
+  return /(?:数学类|中外|应数)\s*26\d{2}.*[-—_].*[\u4e00-\u9fff]{2,5}$/.test(line)
     || line.includes("工作群")
     || /^(群主|群成员|撤回了一条)/.test(line);
 }
@@ -104,6 +118,10 @@ function parseChatText(text) {
       currentType = "缺勤";
       currentGroup = null;
       if (!currentDate) warnings.push(`日期无法识别：${line}`);
+      else if (!dateInSelectedPeriod(currentDate, config)) {
+        warnings.push(`日期不在所选${config.month}月${config.period}，已跳过：${line}`);
+        currentDate = null;
+      }
     }
 
     let groupFound = false;
@@ -127,9 +145,12 @@ function parseChatText(text) {
     else if (line.includes("缺勤") || line.includes("旷课")) currentType = "缺勤";
 
     if (looksLikeSender(line) && !dateMatch && !["缺勤", "早退", "请假"].some((token) => line.includes(token))) continue;
-    const matchedNames = names.filter((name) => line.includes(name));
+    const allMatchedNames = names.filter((name) => line.includes(name));
+    const matchedNames = allMatchedNames.filter((name) =>
+      !allMatchedNames.some((other) => other.length > name.length && other.includes(name))
+    );
     if (!matchedNames.length) {
-      if (/(?:25\d{2}\s*[-—_:：]?\s*[\u4e00-\u9fff·]{2,6}|[\u4e00-\u9fff·]{2,6}\s*25\d{2})/.test(line) && !looksLikeSender(line)) {
+      if (/(?:26\d{2}\s*[-—_:：]?\s*[\u4e00-\u9fff·]{2,6}|[\u4e00-\u9fff·]{2,6}\s*26\d{2})/.test(line) && !looksLikeSender(line)) {
         warnings.push(`疑似名单但未匹配：${line}`);
       }
       continue;
@@ -139,7 +160,7 @@ function parseChatText(text) {
       continue;
     }
 
-    const classCode = line.match(/25\d{2}/)?.[0] || null;
+    const classCode = line.match(/26\d{2}/)?.[0] || null;
     for (const name of matchedNames) {
       let candidates = (byName.get(name) || []).filter((student) => student.group === currentGroup);
       if (classCode) {
@@ -256,36 +277,38 @@ function addEvent() {
 
 function updateRosterDisplay() {
   if (!state.roster.length) {
-    $("#rosterBadge").textContent = "请先选择名单模板";
-    $("#templateSummary").textContent = "尚未选择模板";
-    $("#templateCard").classList.remove("ready");
+    $("#rosterBadge").textContent = "26级名单载入失败";
+    $("#templateSummary").textContent = "名单未能载入，请刷新页面重试。";
     return;
   }
   const mathCount = state.roster.filter((student) => student.group === "数学类").length;
   const intlCount = state.roster.filter((student) => student.group === "中外").length;
-  $("#rosterBadge").textContent = `当前名单 ${state.roster.length} 人 · 数学类 ${mathCount} · 中外 ${intlCount}`;
-  $("#templateSummary").textContent = `名单已就绪：${state.roster.length} 人（数学类 ${mathCount}，中外 ${intlCount}）`;
-  $("#templateCard").classList.add("ready");
+  $("#rosterBadge").textContent = `26级名单 ${state.roster.length} 人`;
+  $("#templateSummary").textContent = `名单已内置：数学类 ${mathCount} 人，中外 ${intlCount} 人。`;
 }
 
-async function useTemplateBuffer(buffer, persist = true) {
+async function useTemplateBuffer(buffer) {
   const roster = await BrowserXlsx.parseRoster(buffer);
   state.templateBuffer = buffer.slice(0);
   state.roster = roster;
-  if (persist) await BrowserXlsx.saveTemplate(buffer);
   updateRosterDisplay();
   return roster;
 }
 
-async function handleTemplateFile(file) {
-  if (!file || !file.name.toLowerCase().endsWith(".xlsx")) throw new Error("请选择 .xlsx 名单模板");
-  if (file.size > 20 * 1024 * 1024) throw new Error("模板不能超过 20MB");
-  const roster = await useTemplateBuffer(await file.arrayBuffer(), true);
-  showToast(`模板已保存在本设备，共 ${roster.length} 人`);
+async function loadBuiltInTemplate() {
+  if (window.BUILT_IN_TEMPLATE_BASE64) {
+    const binary = atob(window.BUILT_IN_TEMPLATE_BASE64);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0)).buffer;
+  }
+  const response = await fetch("./roster-template.xlsx", { cache: "no-store" });
+  if (!response.ok) throw new Error("内置名单下载失败");
+  return response.arrayBuffer();
 }
 
 async function parseText() {
-  if (!state.roster.length) return showToast("请先选择当前名单 Excel 模板");
+  if (!state.roster.length) return showToast("26级名单尚未载入，请刷新页面重试");
+  const configError = validateSettings();
+  if (configError) return showToast(configError);
   const text = $("#chatInput").value.trim();
   if (!text) return showToast("请先粘贴或导入群聊文字");
   const button = $("#parseBtn");
@@ -296,12 +319,14 @@ async function parseText() {
     state.events = result.events;
     state.warnings = result.warnings;
     state.reportDays = result.reportDays;
+    if (state.reportDays.数学类.length) $("#mathDaysInput").value = state.reportDays.数学类.length;
+    if (state.reportDays.中外.length) $("#intlDaysInput").value = state.reportDays.中外.length;
     const warningBox = $("#warningBox");
     warningBox.classList.toggle("hidden", !state.warnings.length);
     warningBox.textContent = state.warnings.length
       ? `需要人工确认的内容（${state.warnings.length}）：\n${state.warnings.slice(0, 8).join("\n")}${state.warnings.length > 8 ? "\n…" : ""}`
       : "";
-    $("#coverageText").textContent = `从文字中识别到检查日期：数学类 ${state.reportDays.数学类.length} 天，中外 ${state.reportDays.中外.length} 天。最终比例以第一步填写的检查天数为准。`;
+    $("#coverageText").textContent = `已按聊天记录自动填写检查天数：数学类 ${state.reportDays.数学类.length} 天，中外 ${state.reportDays.中外.length} 天。若记录不完整，请返回修改。`;
     state.filter = "全部";
     $$(".filter").forEach((item) => item.classList.toggle("active", item.dataset.filter === "全部"));
     renderEvents();
@@ -315,9 +340,26 @@ async function parseText() {
 }
 
 function prepareExport() {
+  const config = settings();
+  const configError = validateSettings(config);
+  if (configError) return showToast(configError);
+  const identities = new Set();
+  const countedByStudentDate = new Map();
+  for (const event of state.events) {
+    if (!state.roster.some((student) => student.student_id === event.student_id)) return showToast(`名单校验失败：${event.name}`);
+    if (!dateInSelectedPeriod(event.date, config)) return showToast(`${event.name} 的日期不在所选半月，请修改`);
+    const identity = `${event.date}|${event.type}|${event.student_id}`;
+    if (identities.has(identity)) return showToast(`${event.name} 在 ${event.date} 有重复记录，请删除一条`);
+    identities.add(identity);
+    if (event.type !== "请假") {
+      const key = `${event.date}|${event.student_id}`;
+      if (countedByStudentDate.has(key) && countedByStudentDate.get(key) !== event.type) return showToast(`${event.name} 在 ${event.date} 同时标记缺勤和早退，请确认`);
+      countedByStudentDate.set(key, event.type);
+    }
+  }
+  if (state.reportDays.数学类.length > config.math_days || state.reportDays.中外.length > config.intl_days) return showToast("检查天数小于已识别日期数，请返回修正");
   const counted = state.events.filter((event) => event.type !== "请假");
   const uniqueStudents = new Set(counted.map((event) => event.student_id)).size;
-  const config = settings();
   $("#exportSummary").innerHTML = `<b>${config.year} 年 ${config.month} 月${escapeHtml(config.period)}</b><br>数学类 ${config.math_days} 天 · 中外 ${config.intl_days} 天 · 涉及 ${uniqueStudents} 名学生 · ${counted.length} 条计入记录`;
   goTo(3);
 }
@@ -349,13 +391,13 @@ async function downloadWorkbook() {
 }
 
 function loadFormatExample() {
-  if (!state.roster.length) return showToast("请先选择模板，示例会使用名单中的姓名");
+  if (!state.roster.length) return showToast("26级名单尚未载入");
   const math = state.roster.find((student) => student.group === "数学类");
   const intl = state.roster.find((student) => student.group === "中外");
   const month = settings().month;
   $("#chatInput").value = `${month}月1日\n数学类\n缺勤\n${math.class_code} ${math.name}\n\n${month}月1日\n中外\n无人缺勤\n\n${month}月2日\n中外\n早退\n${intl.class_code} ${intl.name}`;
   $("#chatInput").dispatchEvent(new Event("input"));
-  showToast("已载入格式示例；姓名来自本设备模板");
+  showToast("已载入26级名单格式示例");
 }
 
 $("#chatInput").addEventListener("input", (event) => $("#charCount").textContent = `${event.target.value.length} 字`);
@@ -368,23 +410,6 @@ $("#textFileInput").addEventListener("change", async (event) => {
     $("#chatInput").dispatchEvent(new Event("input"));
     showToast("聊天文本已导入");
   } catch (error) { showToast(error.message); }
-  event.target.value = "";
-});
-$("#templateInputTop").addEventListener("change", async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  try { await handleTemplateFile(file); } catch (error) { showToast(error.message); }
-  event.target.value = "";
-});
-$("#templateInput").addEventListener("change", async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  const status = $("#templateStatus");
-  status.textContent = "正在本机检查模板…";
-  try {
-    const roster = await handleTemplateFile(file);
-    status.textContent = `新模板已启用，共 ${roster.length} 人`;
-  } catch (error) { status.textContent = error.message; }
   event.target.value = "";
 });
 $("#parseBtn").addEventListener("click", parseText);
@@ -442,9 +467,11 @@ $("#installBtn").addEventListener("click", async () => {
   $("#installBtn").classList.add("hidden");
 });
 
-$("#yearInput").value = new Date().getFullYear();
+const now = new Date();
+$("#yearInput").value = now.getFullYear();
+$("#monthInput").value = now.getMonth() + 1;
 updateRosterDisplay();
-BrowserXlsx.loadSavedTemplate()
-  .then((buffer) => buffer && useTemplateBuffer(buffer, false))
-  .catch(() => showToast("未能读取本设备保存的模板，请重新选择"));
+loadBuiltInTemplate()
+  .then((buffer) => useTemplateBuffer(buffer))
+  .catch((error) => showToast(error.message));
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js"));

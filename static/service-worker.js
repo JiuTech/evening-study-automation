@@ -1,4 +1,4 @@
-const CACHE_NAME = "evening-study-generator-v2";
+const CACHE_NAME = "evening-study-generator-v3";
 const APP_FILES = [
   "./",
   "./index.html",
@@ -7,6 +7,7 @@ const APP_FILES = [
   "./browser-xlsx.js",
   "./vendor/jszip.min.js",
   "./manifest.webmanifest",
+  "./roster-template.xlsx",
   "./icon.svg"
 ];
 
