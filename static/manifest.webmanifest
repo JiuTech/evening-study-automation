@@ -1,7 +1,7 @@
 {
   "name": "26级晚自习公示生成器",
   "short_name": "26级晚自习",
-  "description": "识别26级群聊记录并生成半月晚自习公示 Excel",
+  "description": "识别26级群聊记录或导入缺勤名单，生成半月晚自习公示 Excel",
   "lang": "zh-CN",
   "start_url": "./",
   "scope": "./",

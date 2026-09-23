@@ -62,6 +62,18 @@ class Streamlit2026Tests(unittest.TestCase):
         self.assertIn("loadBuiltInTemplate", app)
         self.assertIn("dateInSelectedPeriod", app)
 
+    def test_absence_list_import_is_available_without_roster_upload(self):
+        html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        app = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+        xlsx = (ROOT / "static" / "browser-xlsx.js").read_text(encoding="utf-8")
+        self.assertIn('id="listModeBtn"', html)
+        self.assertIn('id="absenceFileInput"', html)
+        self.assertIn('id="defaultDateInput"', html)
+        self.assertIn("parseDirectListText", app)
+        self.assertIn("importAbsenceFiles", app)
+        self.assertIn("importSheetText", xlsx)
+        self.assertNotIn("上传学生花名册", html)
+
 
 if __name__ == "__main__":
     unittest.main()

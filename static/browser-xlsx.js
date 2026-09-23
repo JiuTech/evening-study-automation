@@ -9,7 +9,7 @@
   const serializer = new XMLSerializer();
 
   function parseXml(text, label) {
-    const document = parser.parseFromString(text, "application/xml");
+    const document = parser.parseFromString(String(text).replace(/^\uFEFF/, ""), "application/xml");
     const error = document.getElementsByTagName("parsererror")[0];
     if (error) throw new Error(`${label} 不是有效的 Excel XML`);
     return document;
@@ -117,6 +117,58 @@
   function chineseDate(isoDate) {
     const [, month, day] = String(isoDate).split("-").map(Number);
     return `${month}月${day}日`;
+  }
+
+  function excelSerialToIso(value) {
+    const serial = Number(value);
+    if (!Number.isFinite(serial) || serial < 20000 || serial > 80000) return String(value ?? "");
+    const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(serial) * 86400000);
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+  }
+
+  async function importSheetText(buffer) {
+    let zip;
+    try {
+      zip = await JSZip.loadAsync(buffer.slice(0));
+    } catch (error) {
+      throw new Error("无法读取该文件，请使用 .xlsx、.csv 或 .txt 格式");
+    }
+    const sharedStrings = await sharedStringsFromZip(zip);
+    const sheetPath = await firstSheetPath(zip);
+    const entry = zip.file(sheetPath);
+    if (!entry) throw new Error("Excel 中没有可读取的工作表");
+    const sheet = parseXml(await entry.async("string"), "导入名单");
+    const rows = [];
+    for (const row of sheet.getElementsByTagNameNS(MAIN_NS, "row")) {
+      const cells = [...row.getElementsByTagNameNS(MAIN_NS, "c")];
+      if (!cells.length) continue;
+      const values = [];
+      for (const cell of cells) {
+        const column = columnNumber(cell.getAttribute("r"));
+        while (values.length < column) values.push("");
+        values[column - 1] = cellText(cell, sharedStrings).trim();
+      }
+      rows.push(values);
+    }
+    if (!rows.length) throw new Error("Excel 中没有可导入的内容");
+    const headerIndex = rows.findIndex((row) => row.some((cell) => /^(姓名|学生姓名)$/.test(cell)));
+    if (headerIndex >= 0) {
+      const headers = rows[headerIndex].map((value) => value.replace(/\s/g, ""));
+      const dateColumns = headers
+        .map((value, index) => (/日期/.test(value) ? index : -1))
+        .filter((index) => index >= 0);
+      for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+        for (const columnIndex of dateColumns) {
+          if (/^\d{5}(?:\.\d+)?$/.test(rows[rowIndex][columnIndex] || "")) {
+            rows[rowIndex][columnIndex] = excelSerialToIso(rows[rowIndex][columnIndex]);
+          }
+        }
+      }
+    }
+    return rows
+      .map((row) => row.map((value) => String(value ?? "").trim()).join("\t").trim())
+      .filter(Boolean)
+      .join("\n");
   }
 
   async function parseRoster(buffer) {
@@ -239,5 +291,5 @@
     return result;
   }
 
-  window.BrowserXlsx = { parseRoster, buildWorkbook, saveTemplate, loadSavedTemplate, XLSX_MIME };
+  window.BrowserXlsx = { parseRoster, importSheetText, buildWorkbook, saveTemplate, loadSavedTemplate, XLSX_MIME };
 })();

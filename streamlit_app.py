@@ -39,4 +39,4 @@ html = html.replace(
 )
 html = html.replace('<script src="./app.js" defer></script>', f"<script>{app_js}</script>")
 
-components.html(html, height=1420, scrolling=True)
+components.html(html, height=1560, scrolling=True)

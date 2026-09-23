@@ -1,4 +1,4 @@
-const CACHE_NAME = "evening-study-generator-v3";
+const CACHE_NAME = "evening-study-generator-v4";
 const APP_FILES = [
   "./",
   "./index.html",

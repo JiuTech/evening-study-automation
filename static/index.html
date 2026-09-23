@@ -31,10 +31,9 @@
     <section class="workspace">
       <div class="panel" id="step1">
         <div class="panel-heading">
-          <div><h2>粘贴半个月的群聊记录</h2><p id="templateSummary">26级名单正在载入，请稍候。</p></div>
+          <div><h2>导入晚自习记录</h2><p id="templateSummary">26级名单正在载入，请稍候。</p></div>
           <div class="heading-actions">
-            <label class="button ghost file-button">导入聊天文本<input id="textFileInput" type="file" accept=".txt,text/plain"></label>
-            <button id="sampleBtn" class="button ghost">查看格式示例</button>
+            <button id="sampleBtn" class="button ghost">载入示例</button>
           </div>
         </div>
 
@@ -47,9 +46,33 @@
           <label>中外检查天数<input id="intlDaysInput" type="number" min="1" max="31" value="8"></label>
         </div>
 
-        <label class="textarea-label" for="chatInput">群聊记录</label>
-        <textarea id="chatInput" placeholder="直接粘贴聊天记录。系统只匹配内置的26级名单，其他姓名不会写入公示表。"></textarea>
-        <div class="hint-row"><span>同一日期、类别和情况重复发送时，以最后一次为准。</span><span id="charCount">0 字</span></div>
+        <div class="mode-switch" role="tablist" aria-label="记录导入方式">
+          <button id="chatModeBtn" class="mode-button active" role="tab" aria-selected="true">群聊记录</button>
+          <button id="listModeBtn" class="mode-button" role="tab" aria-selected="false">缺勤名单</button>
+        </div>
+
+        <div id="chatModePanel" class="input-panel" role="tabpanel">
+          <div class="input-heading">
+            <label class="textarea-label" for="chatInput">粘贴群聊记录</label>
+            <label class="button ghost file-button">导入聊天文本<input id="textFileInput" type="file" accept=".txt,text/plain"></label>
+          </div>
+          <textarea id="chatInput" placeholder="直接粘贴半个月的群聊记录。系统只匹配内置的26级名单，其他姓名不会写入公示表。"></textarea>
+          <div class="hint-row"><span>同一日期、类别和情况重复发送时，以最后一次为准。</span><span id="charCount">0 字</span></div>
+        </div>
+
+        <div id="listModePanel" class="input-panel hidden" role="tabpanel">
+          <div class="quick-settings">
+            <label>名单默认日期<input id="defaultDateInput" type="date"></label>
+            <label>名单默认情况<select id="defaultTypeInput"><option>缺勤</option><option>早退</option><option>请假</option></select></label>
+            <label class="button ghost file-button import-button">导入缺勤名单<input id="absenceFileInput" type="file" accept=".txt,.csv,.xlsx,text/plain,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple></label>
+          </div>
+          <div class="input-heading list-heading">
+            <label class="textarea-label" for="absenceInput">缺勤、早退或请假学生名单</label>
+            <span id="importStatus" class="import-status" role="status">可直接输入姓名，日期和情况使用上方默认值</span>
+          </div>
+          <textarea id="absenceInput" placeholder="一行一人，例如：&#10;2601 段元博&#10;2602 吴越兮&#10;&#10;也支持在名单中写“9月22日”“早退”“中外”等标题，后续记录会自动沿用。"></textarea>
+          <div class="hint-row"><span>支持 TXT、CSV、XLSX；Excel 中可包含姓名、班级、日期、情况等列。</span><span id="absenceCharCount">0 字</span></div>
+        </div>
         <div class="actions"><button id="parseBtn" class="button primary">识别并核对</button></div>
       </div>
 

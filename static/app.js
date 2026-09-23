@@ -5,6 +5,7 @@ const state = {
   warnings: [],
   reportDays: { 数学类: [], 中外: [] },
   filter: "全部",
+  inputMode: "chat",
 };
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -200,6 +201,95 @@ function parseChatText(text) {
   };
 }
 
+function parseDirectListText(text) {
+  const config = settings();
+  const defaultDate = $("#defaultDateInput").value;
+  const defaultType = $("#defaultTypeInput").value;
+  if (!defaultDate) throw new Error("请先选择名单默认日期");
+  if (!dateInSelectedPeriod(defaultDate, config)) throw new Error("名单默认日期不在所选月份和周期内");
+
+  const names = [...new Set(state.roster.map((student) => student.name))].sort((a, b) => b.length - a.length);
+  const byName = new Map();
+  state.roster.forEach((student) => {
+    if (!byName.has(student.name)) byName.set(student.name, []);
+    byName.get(student.name).push(student);
+  });
+  let currentDate = defaultDate;
+  let currentType = defaultType;
+  let currentGroup = null;
+  const events = [];
+  const warnings = [];
+  const reportDays = { 数学类: new Set(), 中外: new Set() };
+  const seen = new Set();
+
+  for (const originalLine of String(text).replace(/\r/g, "\n").split("\n")) {
+    const line = normaliseLine(originalLine);
+    if (!line) continue;
+    const dateMatch = line.match(/(?:(20\d{2})\s*[年/.-]\s*)?(\d{1,2})\s*[月/.-]\s*(\d{1,2})\s*日?/);
+    if (dateMatch) {
+      const parsed = validIsoDate(Number(dateMatch[1] || config.year), Number(dateMatch[2]), Number(dateMatch[3]));
+      if (!parsed) warnings.push(`日期无法识别：${line}`);
+      else if (!dateInSelectedPeriod(parsed, config)) warnings.push(`日期不在所选${config.month}月${config.period}，已跳过：${line}`);
+      else currentDate = parsed;
+    }
+    if (line.includes("数学类")) currentGroup = "数学类";
+    else if (line.includes("中外") || line.includes("数学与应用数学")) currentGroup = "中外";
+    if (line.includes("早退")) currentType = "早退";
+    else if (line.includes("请假")) currentType = "请假";
+    else if (line.includes("缺勤") || line.includes("旷课")) currentType = "缺勤";
+
+    const allMatchedNames = names.filter((name) => line.includes(name));
+    const matchedNames = allMatchedNames.filter((name) =>
+      !allMatchedNames.some((other) => other.length > name.length && other.includes(name))
+    );
+    if (!matchedNames.length) {
+      if (/^[\s,，、;；\d-]*$/.test(line) || /^(姓名|学生姓名|班级|日期|情况|类型|缺勤|早退|请假|数学类|中外)+$/.test(line.replace(/[\s\t,，]/g, ""))) continue;
+      if (/26\d{2}|[\u4e00-\u9fff·]{2,}/.test(line) && !looksLikeSender(line)) warnings.push(`未在26级名单中识别：${line}`);
+      continue;
+    }
+    const classCode = line.match(/26\d{2}/)?.[0] || null;
+    for (const name of matchedNames) {
+      let candidates = byName.get(name) || [];
+      if (classCode) {
+        const narrowed = candidates.filter((student) => student.class_code === classCode);
+        if (narrowed.length) candidates = narrowed;
+      }
+      if (currentGroup) {
+        const narrowed = candidates.filter((student) => student.group === currentGroup);
+        if (narrowed.length) candidates = narrowed;
+      }
+      if (candidates.length !== 1) {
+        warnings.push(`姓名需要人工确认：${line}`);
+        continue;
+      }
+      const student = candidates[0];
+      const event = {
+        date: currentDate,
+        group: student.group,
+        type: currentType,
+        name: student.name,
+        class_name: student.class_name,
+        class_code: student.class_code,
+        student_id: student.student_id,
+        roster_row: student.row,
+        source: line,
+      };
+      const identity = `${event.date}|${event.type}|${event.student_id}`;
+      if (!seen.has(identity)) {
+        seen.add(identity);
+        events.push(event);
+        reportDays[event.group].add(event.date);
+      }
+    }
+  }
+  events.sort((a, b) => `${a.date}|${a.group}|${a.type}|${a.class_code}|${a.name}`.localeCompare(`${b.date}|${b.group}|${b.type}|${b.class_code}|${b.name}`, "zh-CN"));
+  return {
+    events,
+    warnings: [...new Set(warnings)],
+    reportDays: { 数学类: [...reportDays.数学类].sort(), 中外: [...reportDays.中外].sort() },
+  };
+}
+
 function rosterOptions(event) {
   return state.roster
     .filter((student) => student.group === event.group && (!event.class_code || student.class_code === event.class_code))
@@ -309,24 +399,30 @@ async function parseText() {
   if (!state.roster.length) return showToast("26级名单尚未载入，请刷新页面重试");
   const configError = validateSettings();
   if (configError) return showToast(configError);
-  const text = $("#chatInput").value.trim();
-  if (!text) return showToast("请先粘贴或导入群聊文字");
+  const input = state.inputMode === "chat" ? $("#chatInput") : $("#absenceInput");
+  const text = input.value.trim();
+  if (!text) return showToast(state.inputMode === "chat" ? "请先粘贴或导入群聊记录" : "请先输入或导入缺勤名单");
   const button = $("#parseBtn");
   button.disabled = true;
   button.textContent = "正在本机识别…";
   try {
-    const result = parseChatText(text);
+    const result = state.inputMode === "chat" ? parseChatText(text) : parseDirectListText(text);
+    if (!result.events.length) throw new Error("没有匹配到任何26级学生，请检查姓名、班级或日期格式");
     state.events = result.events;
     state.warnings = result.warnings;
     state.reportDays = result.reportDays;
-    if (state.reportDays.数学类.length) $("#mathDaysInput").value = state.reportDays.数学类.length;
-    if (state.reportDays.中外.length) $("#intlDaysInput").value = state.reportDays.中外.length;
+    if (state.inputMode === "chat") {
+      if (state.reportDays.数学类.length) $("#mathDaysInput").value = state.reportDays.数学类.length;
+      if (state.reportDays.中外.length) $("#intlDaysInput").value = state.reportDays.中外.length;
+    }
     const warningBox = $("#warningBox");
     warningBox.classList.toggle("hidden", !state.warnings.length);
     warningBox.textContent = state.warnings.length
       ? `需要人工确认的内容（${state.warnings.length}）：\n${state.warnings.slice(0, 8).join("\n")}${state.warnings.length > 8 ? "\n…" : ""}`
       : "";
-    $("#coverageText").textContent = `已按聊天记录自动填写检查天数：数学类 ${state.reportDays.数学类.length} 天，中外 ${state.reportDays.中外.length} 天。若记录不完整，请返回修改。`;
+    $("#coverageText").textContent = state.inputMode === "chat"
+      ? `已按聊天记录自动填写检查天数：数学类 ${state.reportDays.数学类.length} 天，中外 ${state.reportDays.中外.length} 天。若记录不完整，请返回修改。`
+      : `名单已匹配到内置26级学生。直接导入名单无法推算总检查天数，请确认上方“数学类检查天数”和“中外检查天数”填写正确。`;
     state.filter = "全部";
     $$(".filter").forEach((item) => item.classList.toggle("active", item.dataset.filter === "全部"));
     renderEvents();
@@ -390,17 +486,64 @@ async function downloadWorkbook() {
   }
 }
 
+function setInputMode(mode) {
+  state.inputMode = mode === "list" ? "list" : "chat";
+  const listMode = state.inputMode === "list";
+  $("#chatModePanel").classList.toggle("hidden", listMode);
+  $("#listModePanel").classList.toggle("hidden", !listMode);
+  $("#chatModeBtn").classList.toggle("active", !listMode);
+  $("#listModeBtn").classList.toggle("active", listMode);
+  $("#chatModeBtn").setAttribute("aria-selected", String(!listMode));
+  $("#listModeBtn").setAttribute("aria-selected", String(listMode));
+  $("#sampleBtn").textContent = listMode ? "载入名单示例" : "载入群聊示例";
+}
+
+function syncDefaultDate() {
+  const config = settings();
+  if (!Number.isInteger(config.year) || !Number.isInteger(config.month)) return;
+  const day = config.period === "上半月" ? 1 : 16;
+  $("#defaultDateInput").value = `${config.year}-${String(config.month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+async function importAbsenceFiles(files) {
+  if (!files.length) return;
+  const parts = [];
+  const importedNames = [];
+  for (const file of files) {
+    const extension = file.name.split(".").pop().toLowerCase();
+    if (extension === "xlsx") parts.push(await BrowserXlsx.importSheetText(await file.arrayBuffer()));
+    else if (["txt", "csv"].includes(extension)) parts.push(await file.text());
+    else throw new Error(`${file.name} 格式不支持，请使用 TXT、CSV 或 XLSX`);
+    importedNames.push(file.name);
+  }
+  const existing = $("#absenceInput").value.trim();
+  $("#absenceInput").value = [existing, ...parts].filter(Boolean).join("\n");
+  $("#absenceInput").dispatchEvent(new Event("input"));
+  $("#importStatus").textContent = `已导入 ${importedNames.length} 个文件：${importedNames.join("、")}`;
+  setInputMode("list");
+  showToast(`已导入 ${importedNames.length} 个名单文件`);
+}
+
 function loadFormatExample() {
   if (!state.roster.length) return showToast("26级名单尚未载入");
   const math = state.roster.find((student) => student.group === "数学类");
   const intl = state.roster.find((student) => student.group === "中外");
   const month = settings().month;
-  $("#chatInput").value = `${month}月1日\n数学类\n缺勤\n${math.class_code} ${math.name}\n\n${month}月1日\n中外\n无人缺勤\n\n${month}月2日\n中外\n早退\n${intl.class_code} ${intl.name}`;
-  $("#chatInput").dispatchEvent(new Event("input"));
-  showToast("已载入26级名单格式示例");
+  if (state.inputMode === "list") {
+    $("#absenceInput").value = `${math.class_code} ${math.name}\n${intl.class_code} ${intl.name}\n\n${month}月2日\n早退\n${math.class_code} ${math.name}`;
+    $("#absenceInput").dispatchEvent(new Event("input"));
+    showToast("已载入缺勤名单示例");
+  } else {
+    $("#chatInput").value = `${month}月1日\n数学类\n缺勤\n${math.class_code} ${math.name}\n\n${month}月1日\n中外\n无人缺勤\n\n${month}月2日\n中外\n早退\n${intl.class_code} ${intl.name}`;
+    $("#chatInput").dispatchEvent(new Event("input"));
+    showToast("已载入群聊格式示例");
+  }
 }
 
 $("#chatInput").addEventListener("input", (event) => $("#charCount").textContent = `${event.target.value.length} 字`);
+$("#absenceInput").addEventListener("input", (event) => $("#absenceCharCount").textContent = `${event.target.value.length} 字`);
+$("#chatModeBtn").addEventListener("click", () => setInputMode("chat"));
+$("#listModeBtn").addEventListener("click", () => setInputMode("list"));
 $("#sampleBtn").addEventListener("click", loadFormatExample);
 $("#textFileInput").addEventListener("change", async (event) => {
   const file = event.target.files[0];
@@ -410,6 +553,15 @@ $("#textFileInput").addEventListener("change", async (event) => {
     $("#chatInput").dispatchEvent(new Event("input"));
     showToast("聊天文本已导入");
   } catch (error) { showToast(error.message); }
+  event.target.value = "";
+});
+$("#absenceFileInput").addEventListener("change", async (event) => {
+  const files = [...event.target.files];
+  try { await importAbsenceFiles(files); }
+  catch (error) {
+    $("#importStatus").textContent = error.message;
+    showToast(error.message);
+  }
   event.target.value = "";
 });
 $("#parseBtn").addEventListener("click", parseText);
@@ -470,6 +622,9 @@ $("#installBtn").addEventListener("click", async () => {
 const now = new Date();
 $("#yearInput").value = now.getFullYear();
 $("#monthInput").value = now.getMonth() + 1;
+setInputMode("chat");
+syncDefaultDate();
+["#yearInput", "#monthInput", "#periodInput"].forEach((selector) => $(selector).addEventListener("change", syncDefaultDate));
 updateRosterDisplay();
 loadBuiltInTemplate()
   .then((buffer) => useTemplateBuffer(buffer))
